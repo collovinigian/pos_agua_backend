@@ -7,8 +7,9 @@ const Tasa = require('./models/Tasa');
 const Producto = require('./models/Producto'); 
 const Jornada = require('./models/Jornada');
 const Cliente = require('./models/Cliente');
-const Factura = require('./models/Factura'); // NUEVO
-const DetalleFactura = require('./models/DetalleFactura'); // NUEVO
+const Factura = require('./models/Factura'); 
+const DetalleFactura = require('./models/DetalleFactura');
+const Configuracion = require('./models/Configuracion');
 
 // 2. Definir las Asociaciones (Relaciones entre tablas)
 // Cliente <-> Facturas (Un cliente tiene muchas facturas)
@@ -33,6 +34,8 @@ const productoRoutes = require('./routes/producto.routes');
 const jornadaRoutes = require('./routes/jornada.routes');
 const clienteRoutes = require('./routes/cliente.routes');
 const facturaRoutes = require('./routes/factura.routes');
+const configuracionRoutes = require('./routes/configuracion.routes');
+const reporteRoutes = require('./routes/reporte.routes');
 
 const app = express();
 
@@ -50,5 +53,7 @@ app.use('/api/productos', productoRoutes);
 app.use('/api/jornadas', jornadaRoutes);
 app.use('/api/clientes', clienteRoutes);
 app.use('/api/facturas', facturaRoutes);
+app.use('/api/configuracion', configuracionRoutes);
+app.use('/api/reportes', reporteRoutes);
 
 module.exports = app;

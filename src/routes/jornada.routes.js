@@ -2,8 +2,8 @@ const express = require('express');
 const router = express.Router();
 const jornadaController = require('../controllers/jornada.controller');
 
-// Ruta para abrir la caja al iniciar el día
-router.post('/abrir', jornadaController.abrirJornada);
+// Ruta para abrir la caja al iniciar el día (¡LE QUITAMOS EL /abrir PARA QUE COINCIDA CON FLUTTER!)
+router.post('/', jornadaController.abrirJornada);
 
 // Ruta para verificar si la caja está abierta (Flutter preguntará esto al iniciar)
 router.get('/actual', jornadaController.obtenerJornadaActual);
