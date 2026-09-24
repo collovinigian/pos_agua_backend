@@ -10,6 +10,9 @@ const Cliente = require('./models/Cliente');
 const Factura = require('./models/Factura'); 
 const DetalleFactura = require('./models/DetalleFactura');
 const Configuracion = require('./models/Configuracion');
+const NotaEntrega = require('./models/NotaEntrega');
+const DetalleNota = require('./models/DetalleNota');
+const Abono = require('./models/Abono');
 
 // 2. Definir las Asociaciones (Relaciones entre tablas)
 // Cliente <-> Facturas (Un cliente tiene muchas facturas)
@@ -28,6 +31,20 @@ DetalleFactura.belongsTo(Factura, { foreignKey: 'factura_id' });
 Producto.hasMany(DetalleFactura, { foreignKey: 'producto_id' });
 DetalleFactura.belongsTo(Producto, { foreignKey: 'producto_id' });
 
+// Relaciones del Cuaderno (Notas de Entrega)
+Cliente.hasMany(NotaEntrega, { foreignKey: 'cliente_id' });
+NotaEntrega.belongsTo(Cliente, { foreignKey: 'cliente_id' });
+
+NotaEntrega.hasMany(DetalleNota, { foreignKey: 'nota_id' });
+DetalleNota.belongsTo(NotaEntrega, { foreignKey: 'nota_id' });
+
+Producto.hasMany(DetalleNota, { foreignKey: 'producto_id' });
+DetalleNota.belongsTo(Producto, { foreignKey: 'producto_id' });
+
+// Relaciones de Abonos (Un abono pertenece a una Nota de Entrega)
+NotaEntrega.hasMany(Abono, { foreignKey: 'nota_id' });
+Abono.belongsTo(NotaEntrega, { foreignKey: 'nota_id' });
+
 // 3. Importar Rutas
 const tasaRoutes = require('./routes/tasa.routes');
 const productoRoutes = require('./routes/producto.routes');
@@ -36,6 +53,7 @@ const clienteRoutes = require('./routes/cliente.routes');
 const facturaRoutes = require('./routes/factura.routes');
 const configuracionRoutes = require('./routes/configuracion.routes');
 const reporteRoutes = require('./routes/reporte.routes');
+const cuadernoRoutes = require('./routes/cuaderno.routes');
 
 const app = express();
 
@@ -55,5 +73,6 @@ app.use('/api/clientes', clienteRoutes);
 app.use('/api/facturas', facturaRoutes);
 app.use('/api/configuracion', configuracionRoutes);
 app.use('/api/reportes', reporteRoutes);
+app.use('/api/cuaderno', cuadernoRoutes);
 
 module.exports = app;
