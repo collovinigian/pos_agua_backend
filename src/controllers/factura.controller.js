@@ -4,6 +4,7 @@ const Producto = require('../models/Producto');
 const Jornada = require('../models/Jornada');
 const Cliente = require('../models/Cliente'); // Importante para la vista
 const sequelize = require('../config/db');
+const { Op } = require('sequelize');
 
 const crearFactura = async (req, res) => {
     const t = await sequelize.transaction();
@@ -52,8 +53,28 @@ const crearFactura = async (req, res) => {
 // MEJORA: Traer las facturas con los datos del Cliente incluidos
 const obtenerFacturas = async (req, res) => {
     try {
+        const { fecha_inicio, fecha_fin } = req.query;
+        let whereClause = {};
+
+        // Si mandamos un rango de fechas, lo filtramos
+        if (fecha_inicio && fecha_fin) {
+            const inicio = new Date(fecha_inicio);
+            inicio.setHours(0, 0, 0, 0); // Desde las 12:00 AM
+            
+            const fin = new Date(fecha_fin);
+            fin.setHours(23, 59, 59, 999); // Hasta las 11:59 PM
+
+            whereClause.createdAt = {
+                [Op.between]: [inicio, fin]
+            };
+        }
+
         const facturas = await Factura.findAll({ 
-            include: [{ model: Cliente }], // <--- Magia de Sequelize
+            where: whereClause, // Aplica el filtro (o busca todo si está vacío)
+            include: [
+                { model: Cliente, attributes: ['nombre', 'tipo_documento', 'numero_documento'] },
+                { model: DetalleFactura, include: [{ model: Producto, attributes: ['nombre'] }] } // Necesario para el PDF
+            ],
             order: [['createdAt', 'DESC']] 
         });
         res.status(200).json(facturas);
