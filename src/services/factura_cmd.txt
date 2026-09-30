@@ -1,0 +1,5 @@
+i01Nombre: gianfranco collovini
+i02CI/RIF: V-27410773
+!000004289400001000Producto
+3
+101

@@ -7,6 +7,7 @@ const Factura = require('../models/Factura');
 const DetalleFactura = require('../models/DetalleFactura');
 const db = require('../config/db');
 const { Op } = require('sequelize');
+const impresoraService = require('../services/impresora.service');
 
 // 1. Crear Nota (Entra limpia, el IVA se agregará solo cuando se consolide/facture)
 const crearNota = async (req, res) => {
@@ -114,24 +115,13 @@ const consolidarFacturas = async (req, res) => {
     try {
         const { cliente_id, jornada_id, notas_ids, metodo_pago, subtotal_usd, iva_usd, total_usd, total_bs, tasa_bcv, productos } = req.body;
 
-        // ¡EL DETALLE QUE FALTABA! Generar el número de factura (Ej: F-000005)
         const totalFacturas = await Factura.count();
         const numero_factura = `F-${String(totalFacturas + 1).padStart(6, '0')}`;
 
-        // Crear la factura real
         const factura = await Factura.create({
-            numero_factura, // <--- AÑADIDO AQUÍ
-            cliente_id, 
-            jornada_id, 
-            metodo_pago, 
-            subtotal_usd, 
-            iva_usd, 
-            total_usd, 
-            total_bs, 
-            tasa_bcv
+            numero_factura, cliente_id, jornada_id, metodo_pago, subtotal_usd, iva_usd, total_usd, total_bs, tasa_bcv
         }, { transaction: t });
 
-        // Insertar los productos en la factura
         for (let prod of productos) {
             await DetalleFactura.create({
                 factura_id: factura.id,
@@ -143,11 +133,27 @@ const consolidarFacturas = async (req, res) => {
             }, { transaction: t });
         }
 
-        // Bloquear y marcar las notas del cuaderno como ya facturadas y deuda en 0
         await NotaEntrega.update(
             { estado: 'FACTURADA', saldo_pendiente: 0 },
             { where: { id: { [Op.in]: notas_ids } }, transaction: t }
         );
+
+        // =========================================================
+        // NUEVO: LLAMADA A LA IMPRESORA FISCAL (THE FACTORY HKA)
+        // =========================================================
+        const clienteFactura = await Cliente.findByPk(cliente_id);
+
+        await impresoraService.imprimirFacturaFiscal(
+            { 
+                nombre: clienteFactura ? clienteFactura.nombre : "Cliente Contado", 
+                tipo_documento: clienteFactura ? clienteFactura.tipo_documento : "V", 
+                numero_documento: clienteFactura ? clienteFactura.numero_documento : "00000000" 
+            },
+            productos,
+            tasa_bcv,
+            metodo_pago
+        );
+        // =========================================================
 
         await t.commit();
         res.status(201).json({ mensaje: "Factura consolidada generada con éxito" });
