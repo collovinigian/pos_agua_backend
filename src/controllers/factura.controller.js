@@ -276,11 +276,15 @@ const exportarExcel = async (req, res) => {
             // Formatear la fecha para Venezuela
             const fechaFormateada = f.createdAt.toLocaleString('es-VE', { timeZone: 'America/Caracas' });
 
+            // 🔥 CORRECCIÓN: Creamos la variable basada en los días de crédito
+            const diasCredito = f.dias_credito || 0;
+            const condicionFactura = diasCredito > 0 ? 'Crédito' : 'Contado';
+
             worksheet.addRow({
                 numero: f.numero_factura,
                 fecha: fechaFormateada,
                 cliente: f.Cliente ? f.Cliente.nombre : 'Contado',
-                condicion: condicionFactura,
+                condicion: condicionFactura, // Ahora sí existe y es correcta
                 estado: f.estado,
                 base_bs: Number(subtotalBs),
                 iva_bs: Number(ivaBs),

@@ -1,0 +1,9 @@
+{
+	"mcpServers": {
+		"npx -y @stitch/mcp-server": {
+			"type": "stdio",
+			"command": "stitch",
+			"args": []
+		}
+	}
+}
