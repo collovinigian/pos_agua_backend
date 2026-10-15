@@ -13,6 +13,9 @@ const Configuracion = require('./models/Configuracion');
 const NotaEntrega = require('./models/NotaEntrega');
 const DetalleNota = require('./models/DetalleNota');
 const Abono = require('./models/Abono');
+const Proveedor = require('./models/Proveedor');
+const Compra = require('./models/Compra');
+const DetalleCompra = require('./models/DetalleCompra');
 
 // 2. Definir las Asociaciones (Relaciones entre tablas)
 // Cliente <-> Facturas (Un cliente tiene muchas facturas)
@@ -45,6 +48,16 @@ DetalleNota.belongsTo(Producto, { foreignKey: 'producto_id' });
 NotaEntrega.hasMany(Abono, { foreignKey: 'nota_id' });
 Abono.belongsTo(NotaEntrega, { foreignKey: 'nota_id' });
 
+// Relaciones de Compras y Proveedores
+Proveedor.hasMany(Compra, { foreignKey: 'proveedor_id' });
+Compra.belongsTo(Proveedor, { foreignKey: 'proveedor_id' });
+
+Compra.hasMany(DetalleCompra, { foreignKey: 'compra_id' });
+DetalleCompra.belongsTo(Compra, { foreignKey: 'compra_id' });
+
+Producto.hasMany(DetalleCompra, { foreignKey: 'producto_id' });
+DetalleCompra.belongsTo(Producto, { foreignKey: 'producto_id' });
+
 // 3. Importar Rutas
 const tasaRoutes = require('./routes/tasa.routes');
 const productoRoutes = require('./routes/producto.routes');
@@ -54,6 +67,8 @@ const facturaRoutes = require('./routes/factura.routes');
 const configuracionRoutes = require('./routes/configuracion.routes');
 const reporteRoutes = require('./routes/reporte.routes');
 const cuadernoRoutes = require('./routes/cuaderno.routes');
+const proveedorRoutes = require('./routes/proveedor.routes');
+const compraRoutes = require('./routes/compra.routes');
 
 const app = express();
 
@@ -74,5 +89,7 @@ app.use('/api/facturas', facturaRoutes);
 app.use('/api/configuracion', configuracionRoutes);
 app.use('/api/reportes', reporteRoutes);
 app.use('/api/cuaderno', cuadernoRoutes);
+app.use('/api/proveedores', proveedorRoutes);
+app.use('/api/compras', compraRoutes);
 
 module.exports = app;
