@@ -41,6 +41,18 @@ const Compra = sequelize.define('Compra', {
         type: DataTypes.DECIMAL(10, 2), 
         allowNull: false 
     },
+    monto_exento_bs: { 
+        type: DataTypes.DECIMAL(12, 2), 
+        defaultValue: 0 
+    },
+    base_imponible_bs: { 
+        type: DataTypes.DECIMAL(12, 2), 
+        defaultValue: 0 
+    },
+    iva_bs: { 
+        type: DataTypes.DECIMAL(12, 2), 
+        defaultValue: 0 
+    },
     monto_exento_usd: { 
         type: DataTypes.DECIMAL(10, 2), 
         defaultValue: 0 

@@ -73,11 +73,19 @@ const compraRoutes = require('./routes/compra.routes');
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // 4. Sincronizar la base de datos
 db.sync({ alter: true })
-    .then(() => console.log('📦 Tablas y Relaciones sincronizadas correctamente'))
+    .then(async () => {
+        console.log('📦 Tablas y Relaciones sincronizadas correctamente');
+        // Crear registro de configuración por defecto si no existe
+        const configCount = await Configuracion.count();
+        if (configCount === 0) {
+            await Configuracion.create({});
+            console.log('⚙️ Configuración por defecto creada');
+        }
+    })
     .catch((error) => console.error('❌ Error sincronizando tablas:', error));
 
 // 5. Rutas

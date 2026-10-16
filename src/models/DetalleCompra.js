@@ -24,6 +24,11 @@ const DetalleCompra = sequelize.define('DetalleCompra', {
         allowNull: false,
         defaultValue: 1 
     },
+    costo_unitario_bs: { 
+        type: DataTypes.DECIMAL(12, 2), 
+        allowNull: true,
+        defaultValue: 0 
+    },
     costo_unitario_usd: { 
         type: DataTypes.DECIMAL(10, 2), 
         allowNull: false 
@@ -31,6 +36,11 @@ const DetalleCompra = sequelize.define('DetalleCompra', {
     aplica_iva: { 
         type: DataTypes.BOOLEAN, 
         defaultValue: false 
+    },
+    subtotal_bs: { 
+        type: DataTypes.DECIMAL(12, 2), 
+        allowNull: true,
+        defaultValue: 0 
     },
     subtotal_usd: { 
         type: DataTypes.DECIMAL(10, 2), 

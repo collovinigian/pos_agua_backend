@@ -2,6 +2,7 @@ const Compra = require('../models/Compra');
 const DetalleCompra = require('../models/DetalleCompra');
 const Producto = require('../models/Producto');
 const Proveedor = require('../models/Proveedor');
+const Configuracion = require('../models/Configuracion');
 const sequelize = require('../config/db');
 const { Op } = require('sequelize');
 const ExcelJS = require('exceljs');
@@ -12,6 +13,25 @@ const AGENTE_RETENCION = {
     rif: 'J-408854619',
     rif_seniat: 'J408854619',
     direccion: 'AV RAUL LEONI LOCAL NRO 3 ZONA INDUSTRIAL LOS MONTONES BARCELONA ANZOATEGUI ZONA POSTAL 6001'
+};
+
+// Helper: Obtiene datos del agente de retención desde la tabla de configuración
+const obtenerAgenteRetencion = async () => {
+    try {
+        const config = await Configuracion.findOne();
+        if (config && config.razon_social) {
+            const rifLimpio = (config.rif || '').replace(/-/g, '');
+            return {
+                razon_social: config.razon_social,
+                rif: config.rif || AGENTE_RETENCION.rif,
+                rif_seniat: rifLimpio || AGENTE_RETENCION.rif_seniat,
+                direccion: config.direccion || AGENTE_RETENCION.direccion
+            };
+        }
+    } catch (e) {
+        console.error('Error leyendo configuración, usando valores por defecto:', e.message);
+    }
+    return AGENTE_RETENCION;
 };
 
 const crearCompra = async (req, res) => {
@@ -26,6 +46,9 @@ const crearCompra = async (req, res) => {
             fecha_emision,
             fecha_recepcion,
             tasa_bcv,
+            monto_exento_bs,
+            base_imponible_bs,
+            iva_bs,
             monto_exento_usd,
             base_imponible_usd,
             iva_usd,
@@ -184,6 +207,9 @@ const crearCompra = async (req, res) => {
             fecha_emision,
             fecha_recepcion: fecha_recepcion || new Date(),
             tasa_bcv: parseFloat(tasa_bcv),
+            monto_exento_bs: monto_exento_bs !== undefined && monto_exento_bs !== null ? parseFloat(monto_exento_bs) : ((parseFloat(monto_exento_usd) || 0) * parseFloat(tasa_bcv)),
+            base_imponible_bs: base_imponible_bs !== undefined && base_imponible_bs !== null ? parseFloat(base_imponible_bs) : ((parseFloat(base_imponible_usd) || 0) * parseFloat(tasa_bcv)),
+            iva_bs: iva_bs !== undefined && iva_bs !== null ? parseFloat(iva_bs) : ((parseFloat(iva_usd) || 0) * parseFloat(tasa_bcv)),
             monto_exento_usd: parseFloat(monto_exento_usd) || 0,
             base_imponible_usd: parseFloat(base_imponible_usd) || 0,
             iva_usd: parseFloat(iva_usd) || 0,
@@ -215,14 +241,26 @@ const crearCompra = async (req, res) => {
 
         // Guardar detalles
         for (const item of detalles) {
+            const tasaItem = parseFloat(tasa_bcv) || 1;
+            const cUsd = parseFloat(item.costo_unitario_usd) || 0;
+            const cBs = (item.costo_unitario_bs !== undefined && item.costo_unitario_bs !== null)
+                ? parseFloat(item.costo_unitario_bs)
+                : (cUsd * tasaItem);
+            const subUsd = parseFloat(item.subtotal_usd) || 0;
+            const subBs = (item.subtotal_bs !== undefined && item.subtotal_bs !== null)
+                ? parseFloat(item.subtotal_bs)
+                : (subUsd * tasaItem);
+
             await DetalleCompra.create({
                 compra_id: nuevaCompra.id,
                 producto_id: item.producto_id || null,
                 descripcion: item.descripcion || (item.nombre || 'Item sin descripción'),
                 cantidad: parseInt(item.cantidad, 10) || 1,
-                costo_unitario_usd: parseFloat(item.costo_unitario_usd) || 0,
+                costo_unitario_bs: cBs,
+                costo_unitario_usd: cUsd,
                 aplica_iva: !!item.aplica_iva,
-                subtotal_usd: parseFloat(item.subtotal_usd) || 0
+                subtotal_bs: subBs,
+                subtotal_usd: subUsd
             }, { transaction: t });
         }
 
@@ -367,6 +405,7 @@ const anularCompra = async (req, res) => {
 // =========================================================================
 const exportarLibroComprasExcel = async (req, res) => {
     try {
+        const agente = await obtenerAgenteRetencion();
         const { fecha_inicio, fecha_fin } = req.query;
         let whereClause = {};
 
@@ -391,7 +430,7 @@ const exportarLibroComprasExcel = async (req, res) => {
         });
 
         const workbook = new ExcelJS.Workbook();
-        workbook.creator = AGENTE_RETENCION.razon_social;
+        workbook.creator = agente.razon_social;
         workbook.created = new Date();
 
         const worksheet = workbook.addWorksheet('Libro de Compras SENIAT');
@@ -400,7 +439,7 @@ const exportarLibroComprasExcel = async (req, res) => {
         // Fila 1: Título Principal SENIAT
         worksheet.mergeCells('A1:U1');
         const titleRow = worksheet.getCell('A1');
-        titleRow.value = `LIBRO DE COMPRAS FISCAL (SENIAT) - ${AGENTE_RETENCION.razon_social} (RIF: ${AGENTE_RETENCION.rif})`;
+        titleRow.value = `LIBRO DE COMPRAS FISCAL (SENIAT) - ${agente.razon_social} (RIF: ${agente.rif})`;
         titleRow.font = { name: 'Arial', size: 13, bold: true, color: { argb: 'FFFFFFFF' } };
         titleRow.alignment = { horizontal: 'center', vertical: 'middle' };
         titleRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0D47A1' } };
@@ -514,9 +553,15 @@ const exportarLibroComprasExcel = async (req, res) => {
                 : 'N/A';
             const nombreProveedor = compra.Proveedor ? compra.Proveedor.nombre : 'Proveedor Desconocido';
 
-            let exentoBs = (parseFloat(compra.monto_exento_usd) || 0) * tasa;
-            let baseBs = (parseFloat(compra.base_imponible_usd) || 0) * tasa;
-            let ivaBs = (parseFloat(compra.iva_usd) || 0) * tasa;
+            let exentoBs = compra.monto_exento_bs !== undefined && compra.monto_exento_bs !== null
+                ? parseFloat(compra.monto_exento_bs)
+                : ((parseFloat(compra.monto_exento_usd) || 0) * tasa);
+            let baseBs = compra.base_imponible_bs !== undefined && compra.base_imponible_bs !== null
+                ? parseFloat(compra.base_imponible_bs)
+                : ((parseFloat(compra.base_imponible_usd) || 0) * tasa);
+            let ivaBs = compra.iva_bs !== undefined && compra.iva_bs !== null
+                ? parseFloat(compra.iva_bs)
+                : ((parseFloat(compra.iva_usd) || 0) * tasa);
             let totalBs = parseFloat(compra.total_bs) || (baseBs + exentoBs + ivaBs);
             let ivaRetBs = parseFloat(compra.iva_retenido_bs) || 0;
             let islrRetBs = parseFloat(compra.islr_retenido_bs) || 0;
@@ -652,6 +697,7 @@ const exportarLibroComprasExcel = async (req, res) => {
 // =========================================================================
 const exportarTxtIva = async (req, res) => {
     try {
+        const agente = await obtenerAgenteRetencion();
         const { fecha_inicio, fecha_fin } = req.query;
         let whereClause = {
             aplica_retencion_iva: true,
@@ -686,7 +732,7 @@ const exportarTxtIva = async (req, res) => {
             const mult = esNC ? -1 : 1;
 
             // 1. RIF Agente (sin guiones)
-            const rifAgente = AGENTE_RETENCION.rif_seniat;
+            const rifAgente = agente.rif_seniat;
 
             // 2. Periodo AAAAMM
             const fechaDoc = new Date(c.fecha_emision ? `${c.fecha_emision}T00:00:00` : new Date());
@@ -716,8 +762,14 @@ const exportarTxtIva = async (req, res) => {
             const numeroControl = (c.numero_control || '').replace(/\t/g, ' ').trim();
 
             // Montos en Bs
-            const baseBs = ((parseFloat(c.base_imponible_usd) || 0) * tasa * mult).toFixed(2);
-            const exentoBs = ((parseFloat(c.monto_exento_usd) || 0) * tasa * mult).toFixed(2);
+            const baseVal = c.base_imponible_bs !== undefined && c.base_imponible_bs !== null
+                ? parseFloat(c.base_imponible_bs)
+                : ((parseFloat(c.base_imponible_usd) || 0) * tasa);
+            const exentoVal = c.monto_exento_bs !== undefined && c.monto_exento_bs !== null
+                ? parseFloat(c.monto_exento_bs)
+                : ((parseFloat(c.monto_exento_usd) || 0) * tasa);
+            const baseBs = (baseVal * mult).toFixed(2);
+            const exentoBs = (exentoVal * mult).toFixed(2);
             const totalBs = ((parseFloat(c.total_bs) || 0) * mult).toFixed(2);
             const ivaRetenidoBs = ((parseFloat(c.iva_retenido_bs) || 0) * mult).toFixed(2);
 
@@ -773,6 +825,7 @@ const exportarTxtIva = async (req, res) => {
 // =========================================================================
 const exportarXmlIslr = async (req, res) => {
     try {
+        const agente = await obtenerAgenteRetencion();
         const { fecha_inicio, fecha_fin } = req.query;
         let whereClause = {
             aplica_retencion_islr: true,
@@ -808,7 +861,7 @@ const exportarXmlIslr = async (req, res) => {
         }
 
         let xml = `<?xml version="1.0" encoding="ISO-8859-1"?>\r\n`;
-        xml += `<RelacionRetencionesISLR RifAgente="${AGENTE_RETENCION.rif_seniat}" Periodo="${periodoStr}">\r\n`;
+        xml += `<RelacionRetencionesISLR RifAgente="${agente.rif_seniat}" Periodo="${periodoStr}">\r\n`;
 
         for (const c of compras) {
             const tasa = parseFloat(c.tasa_bcv) || 1;
@@ -821,7 +874,7 @@ const exportarXmlIslr = async (req, res) => {
             const fechaOperacion = fechaParts.length === 3 ? `${fechaParts[2]}/${fechaParts[1]}/${fechaParts[0]}` : '';
 
             const codigoConcepto = c.codigo_concepto_islr || '053';
-            const baseBs = (parseFloat(c.base_imponible_usd) || 0) * tasa;
+            const baseBs = c.base_imponible_bs != null ? parseFloat(c.base_imponible_bs) : ((parseFloat(c.base_imponible_usd) || 0) * tasa);
             const porcentaje = (parseFloat(c.porcentaje_ret_islr) || 0).toFixed(2);
 
             xml += `  <DetalleRetencion>\r\n`;
@@ -849,6 +902,7 @@ const exportarXmlIslr = async (req, res) => {
 
 module.exports = {
     AGENTE_RETENCION,
+    obtenerAgenteRetencion,
     crearCompra,
     obtenerCompras,
     pagarCompraPendiente,
