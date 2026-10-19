@@ -104,7 +104,7 @@ const obtenerFacturas = async (req, res) => {
         const facturas = await Factura.findAll({ 
             where: whereClause, 
             include: [
-                { model: Cliente, attributes: ['nombre', 'tipo_documento', 'numero_documento'] },
+                { model: Cliente, attributes: ['nombre', 'tipo_documento', 'numero_documento', 'direccion', 'telefono'] },
                 { model: DetalleFactura, include: [{ model: Producto, attributes: ['nombre'] }] } 
             ],
             order: [['createdAt', 'DESC']] 
@@ -304,4 +304,52 @@ const exportarExcel = async (req, res) => {
     }
 };
 
-module.exports = { crearFactura, obtenerFacturas, pagarFacturaPendiente, anularFactura, imprimirReporteXController, imprimirReporteZController, exportarExcel };
+const reimprimirFacturaCopia = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const factura = await Factura.findByPk(id, {
+            include: [
+                { model: Cliente, attributes: ['nombre', 'tipo_documento', 'numero_documento', 'direccion', 'telefono'] },
+                { model: DetalleFactura, include: [{ model: Producto, attributes: ['nombre'] }] }
+            ]
+        });
+
+        if (!factura) {
+            return res.status(404).json({ mensaje: "Factura no encontrada" });
+        }
+
+        const clienteDatos = factura.Cliente ? factura.Cliente : {
+            nombre: "Cliente Contado",
+            tipo_documento: "V",
+            numero_documento: "00000000",
+            direccion: "N/A",
+            telefono: ""
+        };
+
+        const resultado = await impresoraService.imprimirCopiaNoFiscal(
+            factura,
+            clienteDatos,
+            factura.DetalleFacturas
+        );
+
+        if (resultado && resultado.exito) {
+            return res.status(200).json({ mensaje: "Copia no fiscal impresa con éxito" });
+        } else {
+            return res.status(500).json({ mensaje: resultado?.mensaje || "Error al imprimir copia en impresora fiscal" });
+        }
+    } catch (error) {
+        console.error("Error al reimprimir factura:", error);
+        return res.status(500).json({ mensaje: "Error de servidor al reimprimir", error: error.message });
+    }
+};
+
+module.exports = { 
+    crearFactura, 
+    obtenerFacturas, 
+    pagarFacturaPendiente, 
+    anularFactura, 
+    imprimirReporteXController, 
+    imprimirReporteZController, 
+    exportarExcel,
+    reimprimirFacturaCopia
+};

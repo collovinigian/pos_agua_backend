@@ -9,5 +9,6 @@ router.put('/anular/:id', facturaController.anularFactura);
 router.post('/reporte-x', facturaController.imprimirReporteXController);
 router.post('/reporte-z', facturaController.imprimirReporteZController);
 router.get('/exportar-excel', facturaController.exportarExcel);
+router.post('/:id/reimprimir', facturaController.reimprimirFacturaCopia);
 
 module.exports = router;

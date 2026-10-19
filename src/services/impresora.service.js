@@ -3,7 +3,7 @@ const { SerialPort } = require('serialport');
 const pad = (num, size) => String(num).padStart(size, '0');
 
 const limpiarTexto = (texto) => {
-    return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ./,-]/g, '');
+    return String(texto || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9 ./,-]/g, '');
 };
 
 const armarPaquete = (comandoStr) => {
@@ -215,4 +215,63 @@ const imprimirReporteZ = async () => {
     }
 };
 
-module.exports = { imprimirFacturaFiscal, imprimirNotaCredito, imprimirReporteX, imprimirReporteZ };
+// ============================================================================
+// FUNCIÓN 5: REIMPRESIÓN COPIA NO FISCAL (DNF)
+// ============================================================================
+const imprimirCopiaNoFiscal = async (factura, cliente, detalles) => {
+    try {
+        let comandos = [];
+        const tasa = parseFloat(factura.tasa_bcv) || 1;
+
+        comandos.push(`80!COPIA DE FACTURA (NO FISCAL)`);
+        comandos.push(`800FACTURA ORIG: ${limpiarTexto(factura.numero_factura || '')}`);
+        
+        const d = new Date(factura.createdAt || new Date());
+        const fechaStr = `${pad(d.getDate(), 2)}-${pad(d.getMonth() + 1, 2)}-${d.getFullYear()}`;
+        comandos.push(`800FECHA ORIG: ${fechaStr}`);
+        comandos.push(`800ESTADO: ${limpiarTexto(factura.estado || 'PAGADA')}`);
+        comandos.push(`800Nombre: ${limpiarTexto(cliente.nombre || 'Contado').substring(0, 30)}`);
+        comandos.push(`800CI/RIF: ${cliente.tipo_documento || 'V'}-${limpiarTexto(cliente.numero_documento || '00000000')}`);
+        
+        let direccion = cliente.direccion && cliente.direccion.trim() !== '' ? limpiarTexto(cliente.direccion) : 'N/A';
+        comandos.push(`800Dir: ${direccion.substring(0, 33)}`);
+        comandos.push(`800--------------------------------------`);
+
+        (detalles || []).forEach(det => {
+            const cant = parseFloat(det.cantidad) || 1;
+            const precioUnitBs = ((parseFloat(det.precio_unitario_usd) || 0) * tasa).toFixed(2);
+            const subtotalItemBs = ((parseFloat(det.subtotal_usd) || 0) * tasa).toFixed(2);
+            const nombreProd = det.Producto ? det.Producto.nombre : (det.nombre || 'Producto');
+            const alicuota = det.aplica_iva ? '(G)' : '(E)';
+
+            comandos.push(`800${cant} x Bs ${precioUnitBs}`);
+            comandos.push(`800${limpiarTexto(nombreProd).substring(0, 18)} ${alicuota} Bs ${subtotalItemBs}`);
+        });
+
+        const subtotalBs = ((parseFloat(factura.subtotal_usd) || 0) * tasa).toFixed(2);
+        const ivaBs = ((parseFloat(factura.iva_usd) || 0) * tasa).toFixed(2);
+        const totalBs = parseFloat(factura.total_bs || 0).toFixed(2);
+
+        comandos.push(`800--------------------------------------`);
+        comandos.push(`800SUBTTL: Bs ${subtotalBs}`);
+        comandos.push(`800IVA (16%): Bs ${ivaBs}`);
+        comandos.push(`80*TOTAL: Bs ${totalBs}`);
+        comandos.push(`800PAGO: ${limpiarTexto(factura.metodo_pago || 'Efectivo')}`);
+        
+        // Cierre obligatorio del Documento No Fiscal con 810
+        comandos.push(`810COPIA SIN DERECHO A CREDITO FISCAL`);
+
+        return await procesarComandos(comandos);
+    } catch (error) {
+        console.error("Error imprimiendo Copia No Fiscal:", error);
+        return { exito: false, mensaje: error.message };
+    }
+};
+
+module.exports = { 
+    imprimirFacturaFiscal, 
+    imprimirNotaCredito, 
+    imprimirReporteX, 
+    imprimirReporteZ, 
+    imprimirCopiaNoFiscal 
+};
