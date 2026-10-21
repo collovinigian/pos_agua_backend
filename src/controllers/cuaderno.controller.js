@@ -138,24 +138,27 @@ const consolidarFacturas = async (req, res) => {
             { where: { id: { [Op.in]: notas_ids } }, transaction: t }
         );
 
-        // =========================================================
-        // NUEVO: LLAMADA A LA IMPRESORA FISCAL (THE FACTORY HKA)
-        // =========================================================
-        const clienteFactura = await Cliente.findByPk(cliente_id);
+        const clienteFactura = await Cliente.findByPk(cliente_id, { transaction: t });
 
-        await impresoraService.imprimirFacturaFiscal(
-            { 
-                nombre: clienteFactura ? clienteFactura.nombre : "Cliente Contado", 
-                tipo_documento: clienteFactura ? clienteFactura.tipo_documento : "V", 
-                numero_documento: clienteFactura ? clienteFactura.numero_documento : "00000000" 
-            },
-            productos,
-            tasa_bcv,
-            metodo_pago
-        );
-        // =========================================================
-
+        // Guardamos primero en la base de datos
         await t.commit();
+
+        try {
+            await impresoraService.imprimirFacturaFiscal(
+                { 
+                    nombre: clienteFactura ? clienteFactura.nombre : "Cliente Contado", 
+                    tipo_documento: clienteFactura ? clienteFactura.tipo_documento : "V", 
+                    numero_documento: clienteFactura ? clienteFactura.numero_documento : "00000000",
+                    direccion: clienteFactura ? clienteFactura.direccion : "N/A"
+                },
+                productos,
+                tasa_bcv,
+                metodo_pago
+            );
+        } catch (errImp) {
+            console.error("Error imprimiendo factura consolidada:", errImp);
+        }
+
         res.status(201).json({ mensaje: "Factura consolidada generada con éxito" });
     } catch (error) {
         await t.rollback();

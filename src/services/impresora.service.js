@@ -1,4 +1,5 @@
 const { SerialPort } = require('serialport');
+const Configuracion = require('../models/Configuracion');
 
 const pad = (num, size) => String(num).padStart(size, '0');
 
@@ -14,86 +15,169 @@ const armarPaquete = (comandoStr) => {
     return Buffer.concat([Buffer.from([0x02]), cmdBuf, Buffer.from([0x03, lrc])]);
 };
 
-const procesarComandos = (comandos) => {
-    return new Promise((resolve) => {
-        const puerto = new SerialPort({ path: 'COM5', baudRate: 9600, dataBits: 8, parity: 'even', stopBits: 1 });
+const cerrarPuertoSeguro = (puerto, callback) => {
+    if (!puerto) {
+        if (callback) callback();
+        return;
+    }
+    try {
+        puerto.removeAllListeners('data');
+        puerto.removeAllListeners('error');
+        puerto.on('error', () => {}); // Prevenir uncaughtException al cerrar
+        if (puerto.isOpen) {
+            puerto.close((err) => {
+                if (err) console.log("Aviso al cerrar puerto:", err.message);
+                if (callback) callback();
+            });
+        } else {
+            if (callback) callback();
+        }
+    } catch (err) {
+        console.error("Error en cierre seguro de puerto:", err.message);
+        if (callback) callback();
+    }
+};
 
-        puerto.on('open', () => {
-            console.log("🖨️ Puerto COM5 abierto. Transmitiendo a máxima velocidad...");
-            
+const procesarComandos = async (comandos) => {
+    let puertoNombre = 'COM5';
+    try {
+        const config = await Configuracion.findOne();
+        if (config && config.puerto_impresora) {
+            puertoNombre = config.puerto_impresora;
+        }
+    } catch (_) {}
+
+    return new Promise((resolve) => {
+        let puerto;
+        let terminado = false;
+
+        const finalizar = (resultado) => {
+            if (terminado) return;
+            terminado = true;
+            cerrarPuertoSeguro(puerto, () => {
+                resolve(resultado);
+            });
+        };
+
+        try {
+            puerto = new SerialPort({ 
+                path: puertoNombre, 
+                baudRate: 9600, 
+                dataBits: 8, 
+                parity: 'even', 
+                stopBits: 1,
+                autoOpen: false 
+            });
+        } catch (err) {
+            console.error(`Error inicializando SerialPort (${puertoNombre}):`, err.message);
+            return resolve({ exito: false, mensaje: `No se pudo iniciar el puerto ${puertoNombre}: ` + err.message });
+        }
+
+        puerto.on('error', (err) => {
+            console.error(`Error en puerto ${puertoNombre}:`, err.message);
+            finalizar({ exito: false, mensaje: `Error en ${puertoNombre}: ` + err.message });
+        });
+
+        puerto.open((err) => {
+            if (err) {
+                console.error(`No se pudo abrir ${puertoNombre}:`, err.message);
+                return finalizar({ exito: false, mensaje: `No se pudo abrir ${puertoNombre}: ` + err.message });
+            }
+
+            console.log(`🖨️ Puerto ${puertoNombre} abierto. Transmitiendo comandos...`);
+
             // Oído global para responder los estados de la impresora
             puerto.on('data', (data) => {
-                if (data.includes(0x02)) {
-                    puerto.write(Buffer.from([0x06])); 
+                if (data.includes(0x02) && puerto && puerto.isOpen) {
+                    puerto.write(Buffer.from([0x06]), (writeErr) => {
+                        if (writeErr) console.log("Aviso ACK:", writeErr.message);
+                    }); 
                 }
             });
-            
+
             const procesarSiguiente = (index) => {
+                if (terminado) return;
+
                 if (index >= comandos.length) {
-                    console.log("✅ Comandos enviados. Esperando corte de papel...");
+                    console.log("✅ Todos los comandos enviados. Esperando corte de papel...");
+                    // Esperar 3.5 segundos para que la impresora física finalice el corte
                     setTimeout(() => {
                         console.log("🔌 Cerrando puerto de forma segura.");
-                        puerto.close();
-                        resolve({ exito: true, mensaje: 'Impresión exitosa' });
-                    }, 4000); 
+                        finalizar({ exito: true, mensaje: 'Impresión exitosa' });
+                    }, 3500); 
                     return;
                 }
 
-                const paquete = armarPaquete(comandos[index]);
+                const cmdActual = comandos[index];
+                const paquete = armarPaquete(cmdActual);
                 let respuestaRecibida = false;
                 
+                // Los comandos de pago/cierre y reportes físicos tardan más tiempo en imprimir
+                const esComandoLargo = ['101', '102', '103', '104', '113', '119', '120', '199', '7', '810', 'I0X', 'I0Z'].includes(cmdActual);
+                const tiempoEspera = esComandoLargo ? 40000 : 12000;
+
                 const timeout = setTimeout(() => {
-                    if (!respuestaRecibida) {
+                    if (!respuestaRecibida && !terminado) {
                         respuestaRecibida = true;
-                        console.error(`⏳ TIMEOUT en comando: ${comandos[index]}`);
-                        puerto.close();
-                        resolve({ exito: false, mensaje: 'Timeout de impresora' });
+                        console.error(`⏳ TIMEOUT en comando: ${cmdActual}`);
+                        finalizar({ exito: false, mensaje: `Timeout en comando ${cmdActual}` });
                     }
-                }, 10000); 
+                }, tiempoEspera); 
                 
                 const onResponse = (data) => {
-                    if (respuestaRecibida) return;
+                    if (respuestaRecibida || terminado) return;
 
                     if (data.includes(0x06)) { // ACK: Aceptado
                         respuestaRecibida = true;
                         clearTimeout(timeout);
-                        puerto.removeListener('data', onResponse);
-                        
-                        // 🔥 MÁXIMA VELOCIDAD: Flujo continuo a 50ms
-                        setTimeout(() => procesarSiguiente(index + 1), 50); 
+                        if (puerto) puerto.removeListener('data', onResponse);
+                        console.log(`✔️ Comando '${cmdActual}' Aceptado (ACK)`);
+                        setTimeout(() => procesarSiguiente(index + 1), 70); 
                         
                     } else if (data.includes(0x15)) { // NAK: Rechazado
                         respuestaRecibida = true;
                         clearTimeout(timeout);
-                        puerto.removeListener('data', onResponse);
-                        
-                        // Ignoramos el rechazo del comando '7' porque es el que despierta la máquina
-                        if (comandos[index] === '7') {
-                            setTimeout(() => procesarSiguiente(index + 1), 50);
+                        if (puerto) puerto.removeListener('data', onResponse);
+                        console.log(`⚠️ Comando '${cmdActual}' respondió NAK`);
+
+                        if (cmdActual === '199') {
+                            // En algunas impresoras o si no hay flag 50, el cierre se fuerza con 7
+                            console.log("ℹ️ Reintentando cierre con comando '7' (totalizador forzado)...");
+                            comandos.splice(index + 1, 0, '7');
+                            setTimeout(() => procesarSiguiente(index + 1), 70);
+                        } else if (cmdActual === '7') {
+                            // Según Manual HKA Pág. 23: cuando hay pago, 7 no anula sino que totaliza la información y corta.
+                            // La máquina suele retornar NAK a la anulación pero procede a totalizar.
+                            console.log("ℹ️ Comando 7 totalizador aceptado por protocolo (cierre en curso).");
+                            setTimeout(() => procesarSiguiente(index + 1), 70);
                         } else {
-                            console.error(`❌ ERROR NAK en comando: ${comandos[index]}`);
-                            puerto.close();
-                            resolve({ exito: false, mensaje: 'Comando rechazado' });
+                            console.error(`❌ ERROR NAK en comando: ${cmdActual}`);
+                            finalizar({ exito: false, mensaje: `Comando rechazado por impresora: ${cmdActual}` });
                         }
                     }
                 };
 
                 puerto.on('data', onResponse);
-                puerto.write(paquete);
+                if (puerto && puerto.isOpen) {
+                    puerto.write(paquete, (writeErr) => {
+                        if (writeErr) {
+                            console.error("Error escribiendo paquete:", writeErr.message);
+                            finalizar({ exito: false, mensaje: 'Error al escribir: ' + writeErr.message });
+                        }
+                    });
+                } else {
+                    finalizar({ exito: false, mensaje: 'Puerto cerrado al enviar comando' });
+                }
             };
 
             procesarSiguiente(0);
-        });
-
-        puerto.on('error', (err) => {
-            resolve({ exito: false, mensaje: 'Error COM5' });
         });
     });
 };
 
 // ============================================================================
 // FUNCIÓN 1: IMPRIMIR FACTURA FISCAL
-// ==========================================================================
+// ============================================================================
 
 const imprimirFacturaFiscal = async (cliente, productos, tasaBcv, metodoPago) => {
     try {
@@ -101,8 +185,6 @@ const imprimirFacturaFiscal = async (cliente, productos, tasaBcv, metodoPago) =>
         comandos.push(`i01Nombre: ${limpiarTexto(cliente.nombre).substring(0, 38)}`);
         comandos.push(`i02CI/RIF: ${cliente.tipo_documento}-${cliente.numero_documento}`);
         
-        // NUEVO: Agregamos la línea i03 para la dirección
-        // Validamos por si el cliente no tiene dirección registrada en la BD
         let direccion = cliente.direccion && cliente.direccion.trim() !== '' ? limpiarTexto(cliente.direccion) : 'NO REGISTRADA';
         comandos.push(`i03Dir: ${direccion.substring(0, 33)}`); // Max 40 caracteres en total
 
@@ -117,8 +199,10 @@ const imprimirFacturaFiscal = async (cliente, productos, tasaBcv, metodoPago) =>
             comandos.push(`${tasa}${precioFormateado}${cantidadFormateada}${limpiarTexto(nombreProd).substring(0, 20)}`);
         });
 
+        // 1. Subtotal
         comandos.push('3'); 
         
+        // 2. Medio de Pago (Pago Directo)
         let codigoPago = '101'; // Efectivo 1
 
         if (metodoPago === 'Punto de Venta' || metodoPago === 'Pago Móvil' || metodoPago === 'Transferencia') {
@@ -128,19 +212,22 @@ const imprimirFacturaFiscal = async (cliente, productos, tasaBcv, metodoPago) =>
         } else if (metodoPago === 'Crédito') {
             codigoPago = '119'; // Ticket 1
         }
-        
         comandos.push(codigoPago);
-        comandos.push('7');
+
+        // 3. 🔥 COMANDO OBLIGATORIO DE CIERRE (MANUAL TFHKA V8.5.0 PÁG 35, 45, 82)
+        // Cierra la factura, imprime totales/IGTF y corta el papel.
+        comandos.push('199');
+
         return await procesarComandos(comandos);
     } catch (error) { 
         console.error("Error imprimiendo factura:", error);
-        return { exito: false }; 
+        return { exito: false, mensaje: error.message }; 
     }
 };
 
 // ============================================================================
 // FUNCIÓN 2: IMPRIMIR NOTA DE CRÉDITO
-// ==========================================================================
+// ============================================================================
 
 const imprimirNotaCredito = async (cliente, productos, tasaBcv, numeroFacturaOriginal, fechaFacturaOriginal, serialImpresora = 'ZZP0021256') => {
     try {
@@ -180,12 +267,13 @@ const imprimirNotaCredito = async (cliente, productos, tasaBcv, numeroFacturaOri
         });
 
         comandos.push('3');   // Subtotal
-        comandos.push('101'); // Cierre de Nota de Crédito Protocolo V8.5.0
-        comandos.push('7');
+        comandos.push('101'); // Medio de pago
+        comandos.push('199'); // Cierre obligatorio (Protocolo V8.5.0)
+
         return await procesarComandos(comandos);
     } catch (error) {
         console.error("Error estructurando Nota de Crédito:", error);
-        return { exito: false };
+        return { exito: false, mensaje: error.message };
     }
 };
 
@@ -194,11 +282,10 @@ const imprimirNotaCredito = async (cliente, productos, tasaBcv, numeroFacturaOri
 // ============================================================================
 const imprimirReporteX = async () => {
     try {
-        // 🔥 COMANDO NATIVO CORREGIDO: 'I0X' (I mayúscula, cero, X mayúscula)
         return await procesarComandos(['I0X']);
     } catch (error) {
         console.error("Error imprimiendo Reporte X:", error);
-        return { exito: false, mensaje: 'Error al procesar Reporte X' };
+        return { exito: false, mensaje: 'Error al procesar Reporte X: ' + error.message };
     }
 };
 
@@ -207,11 +294,10 @@ const imprimirReporteX = async () => {
 // ============================================================================
 const imprimirReporteZ = async () => {
     try {
-        // 🔥 COMANDO NATIVO CORREGIDO: 'I0Z' (I mayúscula, cero, Z mayúscula)
         return await procesarComandos(['I0Z']);
     } catch (error) {
         console.error("Error imprimiendo Cierre Z:", error);
-        return { exito: false, mensaje: 'Error al procesar Cierre Z' };
+        return { exito: false, mensaje: 'Error al procesar Cierre Z: ' + error.message };
     }
 };
 
